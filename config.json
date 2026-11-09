@@ -1,0 +1,83 @@
+{
+  "guildId": "1554566356698136657",
+  "modlogChannelId": "1554585524390469814",
+  "staffChannelId": "1554585391649128580",
+  "reportTicketPrefix": "report-",
+
+  "minAccountAgeDays": 7,
+  "timeoutMinutes": 60,
+  "massMentionLimit": 5,
+
+  "raid": {
+    "joins": 8,
+    "windowSeconds": 60,
+    "durationMinutes": 10,
+    "timeoutNewAccounts": true
+  },
+
+  "exemptRoleIds": [],
+
+  "protectedNames": [
+    "trustline terry",
+    "terry",
+    "the trustline club",
+    "trustline club",
+    "ticket tool",
+    "bouncer",
+    "admin",
+    "moderator",
+    "mod team",
+    "support",
+    "xrpl support",
+    "xaman support",
+    "ripple support"
+  ],
+
+  "allowedDomains": [
+    "trustline-terry.xyz",
+    "xrpl.org",
+    "xrpscan.com",
+    "bithomp.com",
+    "xaman.app",
+    "xumm.app",
+    "ripple.com",
+    "flare.network",
+    "github.com",
+    "x.com",
+    "twitter.com",
+    "youtube.com",
+    "youtu.be",
+    "tenor.com",
+    "giphy.com",
+    "discord.com",
+    "discordapp.com",
+    "cdn.discordapp.com",
+    "media.discordapp.net"
+  ],
+
+  "protectedBrands": [
+    "trustline-terry",
+    "trustlineterry",
+    "xrpl",
+    "xaman",
+    "xumm",
+    "ripple",
+    "bithomp",
+    "xrpscan",
+    "flare"
+  ],
+
+  "blockedDomains": [],
+
+  "shorteners": [
+    "bit.ly",
+    "tinyurl.com",
+    "t.ly",
+    "cutt.ly",
+    "rebrand.ly",
+    "is.gd",
+    "shorturl.at",
+    "rb.gy",
+    "ow.ly"
+  ]
+}
