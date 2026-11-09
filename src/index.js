@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, Client, EmbedBuilder,
-  Events, GatewayIntentBits, PermissionFlagsBits, SlashCommandBuilder,
+  Events, GatewayIntentBits, Partials, PermissionFlagsBits, SlashCommandBuilder,
 } from 'discord.js';
 import { scanMessage, checkName, classifyHost, extractHosts } from './detect.js';
 import { RaidWatch } from './raid.js';
@@ -29,6 +29,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
+  // Partials let edits to messages sent before a restart still reach MessageUpdate.
+  partials: [Partials.Message, Partials.Channel],
 });
 
 // ---------- helpers ----------
@@ -236,9 +238,20 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
 client.on(Events.GuildMemberUpdate, async (before, after) => {
   if (after.guild.id !== cfg.guildId) return;
-  if (before.nickname !== after.nickname || before.user?.globalName !== after.user.globalName) {
-    await checkMemberName(after, 'name change');
+  if (before.partial || before.nickname !== after.nickname) {
+    await checkMemberName(after, 'nickname change');
   }
+});
+
+// Username and display-name changes are account-wide, so they arrive as UserUpdate.
+client.on(Events.UserUpdate, async (before, after) => {
+  if (after.bot) return;
+  if (!before.partial && before.username === after.username && before.globalName === after.globalName) return;
+  try {
+    const guild = await client.guilds.fetch(cfg.guildId);
+    const member = await guild.members.fetch(after.id).catch(() => null);
+    if (member) await checkMemberName(member, 'name change');
+  } catch (e) { console.error('user update:', e); }
 });
 
 // ---------- messages ----------
@@ -247,7 +260,8 @@ client.on(Events.MessageCreate, (m) => screen(m).catch((e) => console.error('scr
 client.on(Events.MessageUpdate, async (before, after) => {
   try {
     if (after.partial) after = await after.fetch();
-    if (before.content === after.content) return; // embed unfurl, not an edit
+    // Embed unfurls fire updates too. A partial "before" has no content, so re-check it.
+    if (!before.partial && before.content === after.content) return;
     await screen(after);
   } catch (e) { console.error('edit screen:', e); }
 });
@@ -312,10 +326,15 @@ client.on(Events.InteractionCreate, async (i) => {
     }
 
     if (i.isButton() && i.customId.startsWith('bouncer:')) {
-      if (!i.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) {
-        return i.reply({ ephemeral: true, content: 'Staff only.' });
-      }
       const [, action, userId] = i.customId.split(':');
+      // Anyone who can run /bouncer can mark a log handled; timeouts need Timeout Members.
+      const needed = action === 'handled' ? PermissionFlagsBits.ManageMessages : PermissionFlagsBits.ModerateMembers;
+      if (!i.memberPermissions?.has(needed)) {
+        return i.reply({
+          ephemeral: true,
+          content: action === 'handled' ? 'Staff only.' : 'You need the Timeout Members permission for that.',
+        });
+      }
       let result = `Marked handled by ${i.user}`;
       if (action === 'timeout' || action === 'untimeout') {
         const member = await i.guild.members.fetch(userId).catch(() => null);

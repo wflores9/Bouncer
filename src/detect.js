@@ -1,8 +1,17 @@
 // Pure detection logic. No Discord calls here, so it is easy to test.
+import { validateMnemonic } from '@scure/bip39';
 import { wordlist as BIP39 } from '@scure/bip39/wordlists/english.js';
 import { normalizeText, normalizeName, editDistance } from './normalize.js';
 
 const BIP39_SET = new Set(BIP39);
+const PHRASE_LENGTHS = [24, 21, 18, 15, 12];
+// Seed words that are also everyday chat words. A real (random) phrase almost never
+// has 3+ of these; a normal sentence almost always does.
+const CHATTY_SEED_WORDS = new Set(`about above again all also always any away because before below between
+can come day during few first give good great have into just know like little long make more much must
+never next now off once one only other over own people please price pretty put right same say still such
+sure thank that then there they thing this time today true try under very want way what when where will
+year you coin token sell hold moon check soon real cool fun game hope deal boost level club art morning`.split(/\s+/));
 
 // XRPL base58 alphabet (no 0, O, I, l). Family seeds start with "s".
 const XRPL_ALPHABET = 'rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz';
@@ -13,7 +22,18 @@ const SECRET_NUMBERS = /(?<!\d)(?:\d{6}[\s,\-]+){7}\d{6}(?!\d)/;
 const URL_RE = /https?:\/\/[^\s<>()\]]+/gi;
 const MASKED_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi;
 const INVITE_RE = /(?:discord(?:app)?\.com\/invite|discord\.gg|dsc\.gg|discord\.me)\/[a-z0-9-]+/i;
-const TLDS = 'com|net|org|xyz|io|app|co|gg|me|link|site|online|top|info|live|pro|fi|finance|cc|ru|cn|tk|ml|ga|cf|click|lol|vip|shop|store|club|network|exchange|ai|to|ly|at|dev|world|cash|money|digital|website|space|tech';
+// Longest first so the alternation never stops on a shorter prefix.
+const TLDS = [
+  'com', 'net', 'org', 'xyz', 'io', 'app', 'co', 'gg', 'me', 'link', 'site', 'online', 'top', 'info', 'live',
+  'pro', 'fi', 'finance', 'cc', 'ru', 'cn', 'tk', 'ml', 'ga', 'cf', 'click', 'lol', 'vip', 'shop', 'store',
+  'club', 'network', 'exchange', 'ai', 'to', 'ly', 'at', 'dev', 'world', 'cash', 'money', 'digital', 'website',
+  'space', 'tech',
+  // Endings scam kits favour
+  'cafe', 'claims', 'claim', 'wallet', 'support', 'services', 'help', 'events', 'zone', 'rewards', 'gift', 'gifts',
+  'bond', 'sbs', 'cfd', 'icu', 'buzz', 'quest', 'fun', 'pw', 'su', 'ws', 'biz', 'one', 'nft', 'crypto', 'global',
+  'center', 'cloud', 'foundation', 'ventures', 'capital', 'markets', 'market', 'trade', 'trading', 'today', 'page',
+  'host', 'llc', 'ltd', 'inc', 'us', 'uk', 'de', 'eu', 'ca', 'vc', 'ph', 'mx', 'tv', 'fm',
+].sort((a, b) => b.length - a.length).join('|');
 const BARE_DOMAIN_RE = new RegExp(
   `(?<![@\\w.-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:${TLDS}))(?![\\w-])`,
   'gi',
@@ -121,13 +141,38 @@ export function findSecrets(content = '') {
   const found = [];
   if (FAMILY_SEED.test(content)) found.push('XRPL family seed');
   if (SECRET_NUMBERS.test(content)) found.push('Xaman secret numbers');
-  const words = normalizeText(content).split(/[^a-z]+/).filter(Boolean);
-  let run = 0;
-  for (const w of words) {
-    run = BIP39_SET.has(w) ? run + 1 : 0;
-    if (run >= 12) { found.push('recovery phrase (12+ BIP39 words)'); break; }
-  }
+  if (hasRecoveryPhrase(content)) found.push('recovery phrase (BIP39)');
   return found;
+}
+
+/**
+ * A recovery phrase is 12/15/18/21/24 seed words in a row that pass the BIP39 checksum
+ * and don't read like a normal sentence. The checksum alone lets ~1 in 16 random
+ * 12-word windows through, so the chatty-word cap is what keeps normal chat safe.
+ */
+function hasRecoveryPhrase(content) {
+  const words = normalizeText(content).split(/[^a-z]+/).filter(Boolean);
+  const runs = [];
+  let cur = [];
+  for (const w of words) {
+    if (BIP39_SET.has(w)) cur.push(w);
+    else { if (cur.length >= 12) runs.push(cur); cur = []; }
+  }
+  if (cur.length >= 12) runs.push(cur);
+
+  for (const run of runs) {
+    for (const n of PHRASE_LENGTHS) {
+      for (let i = 0; i + n <= run.length; i++) {
+        const win = run.slice(i, i + n);
+        if (!validateMnemonic(win.join(' '), BIP39)) continue;
+        // A message that is basically just the phrase gets caught no matter which words it uses.
+        if (words.length <= n + 2) return true;
+        const chatty = win.filter((w) => CHATTY_SEED_WORDS.has(w)).length;
+        if (chatty <= Math.floor(n / 6)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 /**

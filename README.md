@@ -17,7 +17,7 @@ Door security for **The Trustline Club** Discord. Bouncer watches the rope: it r
 | Same bait with no link | Flag in #modlog |
 | Unknown link or shortener | Flag (delete + timeout if the account is under 7 days old) |
 | Someone posts a real **family seed, Xaman secret numbers or 12/24-word phrase** | Delete, warn them by DM, **no timeout** (they're the victim), log redacted |
-| Name copies staff or a protected name (`Trustline Terry`, `ꜱᴜᴘᴘᴏʀᴛ`, `wfIores`) | Exact: timeout + log. Close: flag |
+| Name copies staff or a protected name (`Trustline Terry`, `ꜱᴜᴘᴘᴏʀᴛ`, `wfIores`); checked on join, nickname and username changes | Exact: timeout + log. Close: flag |
 | Fresh account (< 7 days) joins | Flag |
 | 8+ joins in 60s | **Raid mode** for 10 min: new accounts get timed out on join |
 | Ticket Tool opens a `report-` channel | Pings #staff |

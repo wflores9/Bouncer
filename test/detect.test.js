@@ -55,9 +55,32 @@ test('invites, disguised links and mass mentions are removed', () => {
 test('wallet secrets are caught and not echoed', () => {
   assert.deepEqual(findSecrets('my seed is shHM53KPZ87Gwdqarm1bAmPeXqpvi'), ['XRPL family seed']);
   assert.equal(findSecrets('123456 234567 345678 456789 567890 678901 789012 890123').length, 1);
-  const phrase = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
-  assert.equal(scan(phrase).verdict, 'secret');
+  // Valid BIP39 test vectors (checksums pass).
+  const twelve = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const chattyTwelve = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
+  const twentyFour = 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote';
+  assert.equal(scan(twelve).verdict, 'secret');
+  assert.equal(scan(chattyTwelve).verdict, 'secret'); // phrase posted on its own
+  assert.equal(scan(`help! is this right? ${twentyFour} thanks`).verdict, 'secret');
   assert.equal(scan('I think that we should all go to the lounge later tonight ok').verdict, 'none');
+});
+
+test('12+ seed-list words in normal chat are not treated as a phrase', () => {
+  for (const msg of [
+    // 16 words, all on the BIP39 list. v1.0.0 deleted this.
+    'good morning all, today we can only hope this ripple deal will boost price above that level again',
+    'just bought another nft, the art is cool and the club has a great vibe for real',
+    'never give anyone your phrase, always check the link, and only use the real app today',
+  ]) assert.equal(scan(msg).verdict, 'none', msg);
+  // Invalid checksum (not a real phrase) is ignored.
+  assert.deepEqual(findSecrets('abandon ability able about above absent absorb abstract absurd abuse access accident'), []);
+});
+
+test('bare domains with scam-kit endings are caught', () => {
+  assert.deepEqual(extractHosts('mint at xrp.cafe tonight'), ['xrp.cafe']);
+  assert.equal(scan('verify at xaman.support').verdict, 'remove');
+  assert.equal(scan('claim your airdrop at xrpl-drop.claims').verdict, 'remove');
+  assert.equal(scan('wallet-sync.wallet', { accountAgeDays: 1 }).verdict, 'remove');
 });
 
 test('impersonation names', () => {
@@ -69,6 +92,9 @@ test('impersonation names', () => {
   assert.equal(checkName('wfIores', targets)?.level, 'exact');
   assert.equal(checkName('trustline terri', targets)?.level, 'similar');
   assert.equal(checkName('SpaceCadet', targets), null);
+  // Real people named Terry are fine; only the full name is protected.
+  assert.equal(checkName('Terry', targets), null);
+  assert.equal(checkName('Jerry', targets), null);
 });
 
 test('raid window trips once and extends', () => {
@@ -79,6 +105,14 @@ test('raid window trips once and extends', () => {
   assert.equal(r.record(3000), false);
   assert.equal(r.isActive(5 * 60_000), true);
   assert.equal(r.isActive(20 * 60_000), false);
+});
+
+test('manual raid off resets the window', () => {
+  const r = new RaidWatch({ joins: 3, windowSeconds: 60, durationMinutes: 10 });
+  r.record(0); r.record(1000); r.record(2000);
+  r.set(false);
+  assert.equal(r.isActive(3000), false);
+  assert.equal(r.record(3000), false); // would have re-tripped instantly before
 });
 
 test('extractHosts handles URLs and bare domains', () => {

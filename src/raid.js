@@ -29,6 +29,9 @@ export class RaidWatch {
 
   set(on) {
     this.manual = on;
-    if (!on) this.activeUntil = 0;
+    if (!on) {
+      this.activeUntil = 0;
+      this.stamps = []; // so the next join after a manual "off" can't re-trip it instantly
+    }
   }
 }
