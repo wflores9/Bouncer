@@ -16,12 +16,14 @@ import {
 } from './xrpl.js';
 import { Xaman } from './xaman.js';
 import { qualifyingRoles, describeRule } from './holders.js';
+import { needsWallet, gateLabel, checkGateWallet } from './gate.js';
 import { commands } from './commands.js';
 import { line } from './voice.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const base = loadConfig(process.env.BOUNCER_CONFIG ?? resolve(ROOT, 'config.json'));
-const store = new Store(resolve(ROOT, base.dataFile));
+// BOUNCER_DATA_FILE lets a host (e.g. a Railway volume at /data) keep data across redeploys.
+const store = new Store(resolve(ROOT, process.env.BOUNCER_DATA_FILE ?? base.dataFile));
 let cfg = effectiveConfig(base, store.data.lists);
 const refreshCfg = () => { cfg = effectiveConfig(base, store.data.lists); };
 
@@ -431,7 +433,7 @@ async function cmdBouncer(i) {
           `Up ${Math.floor(up / 60)}h ${up % 60}m`,
           `Removed **${stats.removed}** · Flagged **${stats.flagged}** · Secrets caught **${stats.secrets}** · Floods **${stats.floods}**`,
           `Timeouts **${stats.timeouts}** · Warns **${stats.warns}** · Door flags **${stats.joinsFlagged}** · Raids **${stats.raids}**`,
-          `Gate: ${gate ? `on in <#${gate.channelId}> → <@&${gate.roleId}> (${stats.entered} entered)` : 'off'} · Welcome: ${store.get('welcomeChannelId') ? `<#${store.get('welcomeChannelId')}>` : 'off'}`,
+          `Gate: ${gate ? `${gate.mode ?? 'button'} mode in <#${gate.channelId}> → <@&${gate.roleId}> (${stats.entered} entered)` : 'off'} · Welcome: ${store.get('welcomeChannelId') ? `<#${store.get('welcomeChannelId')}>` : 'off'}`,
           `Linked wallets **${store.allWallets().length}** · Holder rules **${store.rules().length}** · Xaman ${xaman.enabled ? 'ready' : 'not set up'}`,
           `Allowlist ${cfg.allowedDomains.length} · Blocklist ${cfg.blockedDomains.length} · Scam addresses ${cfg.blockedAddresses.length}`,
         ].join('\n')).setFooter({ text: 'Bouncer' })],
@@ -521,17 +523,30 @@ async function cmdBouncer(i) {
   if (sub === 'gate') {
     const channel = i.options.getChannel('channel');
     const role = i.options.getRole('role');
+    const mode = i.options.getString('mode') ?? 'button';
+    const issuer = i.options.getString('issuer')?.trim() ?? null;
+    const currency = i.options.getString('currency')?.trim().replace(/^\$/, '') ?? null;
     if (!role.editable) return reply(i, `I can't give **${role.name}**. Drag Bouncer's role above it in Server Settings → Roles, then run this again.`);
     if (role.managed || role.id === i.guild.id) return reply(i, 'Pick a normal role (not @everyone or a bot role).');
+    if (needsWallet({ mode }) && !xaman.enabled) return reply(i, `**${mode}** mode needs Xaman keys in .env. Add them, restart, and run this again.`);
+    if (mode === 'trustline' && (!issuer || !isValidAddress(issuer) || !currency)) {
+      return reply(i, 'Trustline mode needs `issuer:` (a valid r-address) and `currency:` (e.g. TERRY).');
+    }
+    const gate = { mode, ...(mode === 'trustline' ? { issuer, currency } : {}) };
+    const how = {
+      button: 'Press the button to enter the Club.',
+      wallet: 'Press the button and sign in with **Xaman** to enter. Your wallet must be activated on the XRP Ledger. The sign-in is **never** a payment.',
+      trustline: `**No trustline, no entry.** Press the button and sign in with **Xaman**. Your wallet must hold the **${gateLabel(gate)}**. The sign-in is **never** a payment.`,
+    }[mode];
     const panel = await channel.send({
       embeds: [new EmbedBuilder().setColor(COLORS.flag).setTitle('🚪 The door')
         .setDescription([
-          'Press the button to enter the Club.',
+          how,
           '',
           'House rules at the rope:',
           '• Staff will **never** DM you first.',
           '• Nobody here will ever ask for your seed, secret numbers or private key.',
-          '• No "wallet verification" links. The only wallet sign-in is `/wallet link`, and it is never a payment.',
+          '• No "wallet verification" links. The only wallet sign-in is this button or `/wallet link`, and it is never a payment.',
         ].join('\n'))
         .setFooter({ text: 'Bouncer' })],
       components: [new ActionRowBuilder().addComponents(
@@ -541,10 +556,11 @@ async function cmdBouncer(i) {
     if (panel instanceof Error) return reply(i, `Couldn't post in ${channel}: ${panel.message}`);
     const old = store.get('gate');
     if (old?.messageId && old.channelId) client.channels.cache.get(old.channelId)?.messages?.delete(old.messageId).catch(() => {});
-    store.set('gate', { channelId: channel.id, roleId: role.id, messageId: panel.id });
-    await modlog({ content: `🛠️ ${i.user} turned the gate **on**: ${channel} → ${role}` });
+    store.set('gate', { channelId: channel.id, roleId: role.id, messageId: panel.id, ...gate });
+    await modlog({ content: `🛠️ ${i.user} turned the gate **on** (${mode}${mode !== 'button' ? `: ${gateLabel(gate)}` : ''}): ${channel} → ${role}`, allowedMentions: { parse: [] } });
     return reply(i, [
-      `Gate is on. The button is in ${channel}; pressing it gives **${role.name}**.`,
+      `Gate is on in **${mode}** mode. The button is in ${channel}; getting through gives **${role.name}**.`,
+      'Run `/bouncer gate` again any time to change the mode (e.g. to `trustline` when $TERRY launches); the old button is replaced.',
       '',
       '**To finish (in Server Settings → Roles / channel permissions):**',
       `1. @everyone: can see ${channel} only. Turn off *Send Messages* everywhere else (or *View Channel* on the rest).`,
@@ -630,13 +646,34 @@ async function cmdWallet(i) {
   // link
   if (!xaman.enabled) return reply(i, 'Wallet linking is not set up yet. Ask a mod.');
   if (linking.has(i.user.id)) return reply(i, 'You already have a sign-in request open. Finish or wait for it to expire (5 min).');
+  await i.deferReply({ flags: EPH });
+  const address = await xamanLink(i, 'Run `/wallet link` again.');
+  if (!address) return null;
+  const member = await i.guild.members.fetch(i.user.id).catch(() => null);
+  const sync = member ? await syncHolder(member) : { added: [] };
+  return i.editReply({
+    content: `✅ Linked \`${address}\`.${sync.added.length ? ` Roles added: ${sync.added.join(', ')}.` : ''}`,
+    embeds: [],
+    components: [],
+  });
+}
+
+/**
+ * Run a Xaman SignIn inside an already-deferred ephemeral reply and link the wallet.
+ * @returns {Promise<string|null>} the linked address, or null (reply already explains why)
+ */
+async function xamanLink(i, retryHint, { exclusive = false } = {}) {
+  if (linking.has(i.user.id)) {
+    await i.editReply('You already have a sign-in request open. Finish it or wait for it to expire (5 min).');
+    return null;
+  }
   linking.add(i.user.id);
   try {
-    await i.deferReply({ flags: EPH });
     const identifier = `d${i.user.id}-${Date.now().toString(36)}`.slice(0, 40);
     const p = await xaman.createSignIn(identifier, `Sign in to link this wallet to ${i.guild.name} on Discord. This is not a payment.`);
     await i.editReply({
-      embeds: [new EmbedBuilder().setColor(COLORS.info).setTitle('Link your wallet with Xaman')
+      content: '',
+      embeds: [new EmbedBuilder().setColor(COLORS.info).setTitle('Sign in with Xaman')
         .setDescription([
           'Scan the QR with Xaman, or tap the button on your phone.',
           '',
@@ -650,16 +687,17 @@ async function cmdWallet(i) {
     });
     const r = await xaman.waitForSignIn(p.uuid);
     if (!r.signed || !r.account || !isValidAddress(r.account) || (r.txType && r.txType !== 'SignIn')) {
-      return i.editReply({ content: r.expired ? 'Request expired. Run `/wallet link` again.' : 'Not linked: the request was declined.', embeds: [], components: [] });
+      await i.editReply({ content: `${r.expired ? 'Request expired.' : 'Not linked: the request was declined.'} ${retryHint}`, embeds: [], components: [] });
+      return null;
+    }
+    const owner = store.userByWallet(r.account);
+    if (exclusive && owner && owner !== i.user.id) {
+      // One wallet, one member at the door: stops a single wallet letting in a string of alts.
+      await modlog({ content: `⛔ ${i.user} tried the gate with \`${r.account}\`, already linked to <@${owner}>.`, allowedMentions: { parse: [] } });
+      await i.editReply({ content: 'That wallet already belongs to another member here. Use your own wallet, or ask a mod.', embeds: [], components: [] });
+      return null;
     }
     const movedFrom = store.linkWallet(i.user.id, r.account);
-    const member = await i.guild.members.fetch(i.user.id).catch(() => null);
-    const sync = member ? await syncHolder(member) : { added: [] };
-    await i.editReply({
-      content: `✅ Linked \`${r.account}\`.${sync.added.length ? ` Roles added: ${sync.added.join(', ')}.` : ''}`,
-      embeds: [],
-      components: [],
-    });
     await modlog({
       embeds: [baseEmbed('ok', i.user, '🔗 Wallet linked')
         .addFields(
@@ -668,7 +706,7 @@ async function cmdWallet(i) {
           ...(cfg.blockedAddresses.includes(r.account) ? [{ name: '⚠️', value: 'This address is on the scam list.' }] : []),
         )],
     });
-    return null;
+    return r.account;
   } finally {
     linking.delete(i.user.id);
   }
@@ -824,15 +862,40 @@ async function gateButton(i) {
   if (wait > 0) return reply(i, `Take a look at the rules first. Press again in ${wait}s.`);
   if (raid.isActive() && ageDays(i.user) < cfg.minAccountAgeDays) return reply(i, 'The door is on hold while we deal with a crowd. Try again in a few minutes.');
   if (member.isCommunicationDisabled()) return reply(i, "You're timed out right now. Try again after it ends.");
+
+  let address = null;
+  if (needsWallet(gate)) {
+    if (!xaman.enabled) return reply(i, 'The door is being set up. Try again shortly.');
+    await i.deferReply({ flags: EPH });
+    address = store.walletOf(i.user.id)?.address ?? null;
+    if (!address) address = await xamanLink(i, 'Press **Enter the Club** to try again.', { exclusive: true });
+    if (!address) return null;
+    if (cfg.blockedAddresses.includes(address)) {
+      await modlog({ content: `⛔ ${i.user} tried the gate with a scam-listed wallet \`${address}\`.` });
+      return reply(i, "That wallet can't be used here. A mod has been told.");
+    }
+    const check = await checkGateWallet(address, gate, xrpl);
+    if (!check.ok) {
+      return i.editReply({
+        content: `${check.reason}\nWrong wallet? Run \`/wallet unlink\`, then press the button again.`,
+        embeds: [],
+        components: [],
+      });
+    }
+  }
+
   try {
-    await member.roles.add(gate.roleId, 'Bouncer: entered through the gate');
+    await member.roles.add(gate.roleId, `Bouncer: entered through the gate (${gate.mode ?? 'button'})`);
   } catch (e) {
     await modlog({ content: `⚠️ Gate failed for ${i.user}: ${e.message}. Check Bouncer's role is above the gate role.` });
     return reply(i, "I couldn't open the door. A mod has been told.");
   }
   stats.entered += 1;
   await welcome(member);
-  return reply(i, "You're in. Welcome to the Club. 🍸");
+  if (address) syncHolder(member).catch(() => {});
+  return i.deferred
+    ? i.editReply({ content: "You're in. Welcome to the Club. 🍸", embeds: [], components: [] })
+    : reply(i, "You're in. Welcome to the Club. 🍸");
 }
 
 async function modButton(i) {

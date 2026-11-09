@@ -42,7 +42,7 @@ Every automatic removal and every `/warn` is a **strike** with a case number. St
 - `/bouncer raid mode:on|off`: manual raid mode
 - `/bouncer domain action:allow|block|remove domain:` · `/bouncer name action:protect|remove name:` · `/bouncer address action:block|remove address: note:`: change the lists live, no restart
 - `/bouncer lists`: what's been added with commands
-- `/bouncer gate channel: role:` / `/bouncer gate-off`: the "Enter the Club" button
+- `/bouncer gate channel: role: mode:button|wallet|trustline issuer: currency:` / `/bouncer gate-off`: the "Enter the Club" button
 - `/bouncer welcome channel:`: where new members get welcomed (empty = off)
 - `/cases member:`: case history
 
@@ -81,12 +81,30 @@ Default permissions can be changed per role in Server Settings → Integrations 
 
 ### Turning on the gate
 
-1. Create a role, e.g. **Patron**, and drag Bouncer above it.
-2. `/bouncer gate channel:#welcome role:@Patron` posts the button.
-3. Give **@Patron** existing members (so nobody is locked out), then lock @everyone down to the welcome channel and give @Patron the normal access.
-4. Optional: `/bouncer welcome channel:#lounge` so people get a hello once they're in.
+The gate has three modes:
 
-New members wait 15s before the button works (`gate.minSecondsAfterJoin`), and during raid mode fresh accounts are held back.
+| Mode | To get in |
+|---|---|
+| `button` | Press the button |
+| `wallet` | Sign in with Xaman; the wallet must be **activated** on mainnet (holds the 1 XRP reserve). One wallet per member. |
+| `trustline` | Same as `wallet`, and the wallet must hold a **trustline to a token** (`issuer:` + `currency:`). No trustline, no entry. |
+
+1. Create a role, e.g. **Member**, and drag Bouncer above it.
+2. `/bouncer gate channel:#welcome role:@Member mode:wallet` posts the button.
+3. Give **@Member** to existing members (so nobody is locked out), then lock @everyone down to the welcome channel and give @Member the normal access.
+4. Optional: `/bouncer welcome channel:#lounge` so people get a hello once they're in.
+5. At token launch: `/bouncer gate channel:#welcome role:@Member mode:trustline issuer:r… currency:TERRY`. It replaces the old button.
+
+New members wait 15s before the button works (`gate.minSecondsAfterJoin`), and during raid mode fresh accounts are held back. A wallet already linked to another member can't be used at the door.
+
+## Hosting on Railway (24/7)
+
+1. [railway.com](https://railway.com) → **New Project → Deploy from GitHub repo** → pick `Bouncer`. `railway.json` sets the start command and restarts on crashes.
+2. **Variables:** `DISCORD_TOKEN`, `XAMAN_API_KEY`, `XAMAN_API_SECRET`, and `BOUNCER_DATA_FILE=/data/bouncer.json`.
+3. **Volume:** right-click the service → **Attach Volume** → mount path `/data`. Without it, strikes and wallet links reset on every deploy.
+4. Stop the copy on your PC. Two Bouncers running at once will double every action.
+
+Every `git push` redeploys automatically.
 
 ## Data
 
@@ -128,6 +146,7 @@ src/config.js     Config defaults + runtime list merge
 src/xrpl.js       Read-only XRPL JSON-RPC, address checksum, toml check
 src/xaman.js      Xaman SignIn requests
 src/holders.js    Holder-role rules
+src/gate.js       Gate modes (button / wallet / trustline)
 src/voice.js      Bouncer's lines
 test/             node:test suite
 ```

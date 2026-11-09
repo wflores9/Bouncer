@@ -219,3 +219,28 @@ test('xaman: sign-in request is SignIn only, and status is parsed', async () => 
   assert.equal(s.signed, true);
   assert.equal(s.account, GENESIS);
 });
+
+// ---------- gate ----------
+
+import { checkGateWallet, needsWallet, gateLabel } from '../src/gate.js';
+
+test('gate: wallet mode needs an activated wallet', async () => {
+  const gate = { mode: 'wallet' };
+  assert.equal(needsWallet(gate), true);
+  assert.equal(needsWallet({ mode: 'button' }), false);
+  assert.equal((await checkGateWallet(GENESIS, gate, { accountInfo: async () => ({ Balance: '1000000' }) })).ok, true);
+  const unfunded = await checkGateWallet(GENESIS, gate, { accountInfo: async () => null });
+  assert.equal(unfunded.ok, false);
+  assert.match(unfunded.reason, /reserve/);
+});
+
+test('gate: trustline mode needs the line', async () => {
+  const gate = { mode: 'trustline', issuer: ISSUER, currency: 'TERRY' };
+  assert.equal(gateLabel(gate), '$TERRY trustline');
+  const withLine = { accountInfo: async () => ({}), lines: async () => [{ account: ISSUER, currency: toCurrencyCode('TERRY'), balance: '0' }] };
+  const noLine = { accountInfo: async () => ({}), lines: async () => [] };
+  assert.equal((await checkGateWallet(GENESIS, gate, withLine)).ok, true);
+  const r = await checkGateWallet(GENESIS, gate, noLine);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /No trustline, no entry/);
+});

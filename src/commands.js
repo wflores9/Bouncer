@@ -29,7 +29,15 @@ const bouncer = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName('gate').setDescription('Post the "Enter the Club" button and turn the gate on')
     .addChannelOption((o) => o.setName('channel').setDescription('Where the button goes (e.g. #welcome)').setRequired(true)
       .addChannelTypes(ChannelType.GuildText))
-    .addRoleOption((o) => o.setName('role').setDescription('Role members get when they enter').setRequired(true)))
+    .addRoleOption((o) => o.setName('role').setDescription('Role members get when they enter').setRequired(true))
+    .addStringOption((o) => o.setName('mode').setDescription('What it takes to get in (default: button)')
+      .addChoices(
+        { name: 'button: just press it', value: 'button' },
+        { name: 'wallet: Xaman sign-in, activated wallet', value: 'wallet' },
+        { name: 'trustline: wallet + trustline to a token', value: 'trustline' },
+      ))
+    .addStringOption((o) => o.setName('issuer').setDescription('Token issuer r-address (trustline mode)'))
+    .addStringOption((o) => o.setName('currency').setDescription('Token code, e.g. TERRY (trustline mode)')))
   .addSubcommand((s) => s.setName('gate-off').setDescription('Turn the gate off'))
   .addSubcommand((s) => s.setName('welcome').setDescription('Where Bouncer welcomes new members (leave empty to turn off)')
     .addChannelOption((o) => o.setName('channel').setDescription('e.g. #lounge').addChannelTypes(ChannelType.GuildText)));

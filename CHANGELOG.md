@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+- **Gate modes:** `button`, `wallet` (Xaman sign-in + activated mainnet wallet) and `trustline` (wallet + trustline to a token: "No trustline, no entry"). Switch modes by running `/bouncer gate` again.
+- A wallet already linked to another member can't be used at the door.
+- **Railway-ready:** `railway.json`, and `BOUNCER_DATA_FILE` to keep data on a volume.
+
+
 ## 1.1.0
 
 - **Gate:** `/bouncer gate` posts an "Enter the Club" button that gives a role, with a short wait for new joins and a hold during raids. `/bouncer welcome` sets a welcome channel.
