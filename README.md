@@ -1,6 +1,6 @@
 # 🚪 Bouncer
 
-Door security for **The Trustline Club** Discord. Bouncer watches the rope: it removes clear scams, times out the people posting them, and flags everything else for a human.
+Door security for **The Trustline Club** Discord. Bouncer watches the rope: it removes clear scams, times out the people posting them, and flags everything else for a human. It also runs the door (a gate button), keeps a strike record, links XRPL wallets through Xaman and hands out holder roles.
 
 > Same ledger. Higher standards.
 
@@ -20,16 +20,42 @@ Door security for **The Trustline Club** Discord. Bouncer watches the rope: it r
 | Name copies staff or a protected name (`Trustline Terry`, `ꜱᴜᴘᴘᴏʀᴛ`, `wfIores`); checked on join, nickname and username changes | Exact: timeout + log. Close: flag |
 | Fresh account (< 7 days) joins | Flag |
 | 8+ joins in 60s | **Raid mode** for 10 min: new accounts get timed out on join |
+| Message contains an address on the **scam address list** | **Delete + timeout + log** |
+| Bait ("claim your airdrop") plus any r-address to send to | **Delete + timeout + log** |
+| 7+ messages in 10s, or the same message 3x / in 3 channels (2 if it has a link) | **Delete all copies + timeout + log** |
 | Ticket Tool opens a `report-` channel | Pings #staff |
 
 **Bans stay manual.** Every log has **Timeout / Lift timeout / Handled** buttons for mods.
 Staff (anyone with *Manage Messages*) and bots are exempt. Edited messages are re-checked.
 
-### Slash commands (Manage Messages only)
+### Strikes
 
-- `/bouncer status`: counters, uptime, raid state
+Every automatic removal and every `/warn` is a **strike** with a case number. Strikes expire after 30 days.
+2 strikes → 6h timeout, 3 → 24h timeout and the log says *consider a ban*. All tunable under `strikes` in config.
+
+### Slash commands
+
+**Mods (Manage Messages)**
+
+- `/bouncer status`: counters, uptime, raid, gate, wallets
 - `/bouncer check link:<url>`: how Bouncer would classify a link
 - `/bouncer raid mode:on|off`: manual raid mode
+- `/bouncer domain action:allow|block|remove domain:` · `/bouncer name action:protect|remove name:` · `/bouncer address action:block|remove address: note:`: change the lists live, no restart
+- `/bouncer lists`: what's been added with commands
+- `/bouncer gate channel: role:` / `/bouncer gate-off`: the "Enter the Club" button
+- `/bouncer welcome channel:`: where new members get welcomed (empty = off)
+- `/cases member:`: case history
+
+**Mods (Timeout Members)**: `/warn member: reason:` · `/unwarn case:`
+
+**Mods (Manage Roles)**: `/holder add role: type:trustline|nft|xrp issuer: currency: min: taxon:` · `/holder list` · `/holder remove rule:` · `/holder sync`
+
+**Everyone** (replies are private)
+
+- `/wallet link` · `/wallet show` · `/wallet unlink`: link a wallet by signing in with Xaman. It is a **SignIn request only**: it can't move funds or set a trustline.
+- `/xrpl account address:|member:` · `/xrpl tx hash:` · `/xrpl domain domain:`: read-only lookups. `domain` also checks the site's `xrp-ledger.toml` and whether its accounts point back to it.
+
+Default permissions can be changed per role in Server Settings → Integrations → Bouncer.
 
 ## Setup
 
@@ -38,10 +64,11 @@ Staff (anyone with *Manage Messages*) and bots are exempt. Edited messages are r
    - Turn on **Server Members Intent** and **Message Content Intent**
 2. **Invite it** (replace `APP_ID`):
    ```
-   https://discord.com/oauth2/authorize?client_id=APP_ID&scope=bot+applications.commands&permissions=1099511720960
+   https://discord.com/oauth2/authorize?client_id=APP_ID&scope=bot+applications.commands&permissions=1099780156416
    ```
-   That's View Channels, Send Messages, Embed Links, Read Message History, Manage Messages and Timeout Members. Nothing else.
-3. **Role order.** Server Settings → Roles: drag **Bouncer** above the member roles (below Admin/Moderator), or timeouts will fail.
+   That's View Channels, Send Messages, Embed Links, Read Message History, Manage Messages, Timeout Members and Manage Roles (for the gate and holder roles). Nothing else.
+   Already invited with v1.0? Either use the new link, or give the Bouncer role **Manage Roles** in Server Settings → Roles.
+3. **Role order.** Server Settings → Roles: drag **Bouncer** above the member roles *and* above any gate / holder roles (below Admin/Moderator), or timeouts and role changes will fail.
 4. **Run it**
    ```bash
    cp .env.example .env   # paste the token
@@ -50,6 +77,20 @@ Staff (anyone with *Manage Messages*) and bots are exempt. Edited messages are r
    npm start
    ```
    Node 20+. Any always-on host works (Railway, Fly.io, a VPS, a Pi).
+5. **Optional: Xaman wallet linking.** Create an app at [apps.xumm.dev](https://apps.xumm.dev), copy the API key and secret into `.env` as `XAMAN_API_KEY` / `XAMAN_API_SECRET`, restart. Without them, `/wallet link` politely says it's off.
+
+### Turning on the gate
+
+1. Create a role, e.g. **Patron**, and drag Bouncer above it.
+2. `/bouncer gate channel:#welcome role:@Patron` posts the button.
+3. Give **@Patron** existing members (so nobody is locked out), then lock @everyone down to the welcome channel and give @Patron the normal access.
+4. Optional: `/bouncer welcome channel:#lounge` so people get a hello once they're in.
+
+New members wait 15s before the button works (`gate.minSecondsAfterJoin`), and during raid mode fresh accounts are held back.
+
+## Data
+
+Strikes, linked wallets, runtime lists, holder rules and gate settings live in `data/bouncer.json` (git-ignored). Back it up if you move hosts.
 
 ## Config (`config.json`)
 
@@ -63,6 +104,12 @@ Staff (anyone with *Manage Messages*) and bots are exempt. Edited messages are r
 | `minAccountAgeDays`, `timeoutMinutes`, `massMentionLimit` | Thresholds |
 | `raid` | `joins` in `windowSeconds` → raid mode for `durationMinutes` |
 | `exemptRoleIds` | Extra roles Bouncer ignores (e.g. trusted builders) |
+| `blockedAddresses` | Scam r-addresses (also addable with `/bouncer address`) |
+| `flood` | Messages per window, duplicate window / count, cross-channel limit |
+| `strikes` | `expireDays` and escalation `steps` (`at` strikes → `timeoutMinutes`) |
+| `gate.minSecondsAfterJoin` | How long new members wait before the button works |
+| `xrpl.rpc`, `xrpl.holderSyncHours` | Public XRPL servers to use, and how often holder roles are re-checked |
+| `dataFile` | Where Bouncer keeps its data |
 
 Restart after editing. Test changes in a sandbox server first.
 
@@ -70,9 +117,17 @@ Restart after editing. Test changes in a sandbox server first.
 
 ```
 src/index.js      Discord wiring: events, actions, logs, commands, buttons
+src/commands.js   Slash command definitions
 src/detect.js     Pure detection (no Discord calls)
 src/normalize.js  Small caps, homoglyphs, leetspeak, edit distance
+src/flood.js      Flood / copy-paste spam window
+src/strikes.js    Strike escalation
 src/raid.js       Join-rate window
+src/store.js      JSON data file (cases, wallets, lists, rules, settings)
+src/config.js     Config defaults + runtime list merge
+src/xrpl.js       Read-only XRPL JSON-RPC, address checksum, toml check
+src/xaman.js      Xaman SignIn requests
+src/holders.js    Holder-role rules
 src/voice.js      Bouncer's lines
-test/             node:test suite for detection
+test/             node:test suite
 ```

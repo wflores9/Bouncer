@@ -2,6 +2,7 @@
 import { validateMnemonic } from '@scure/bip39';
 import { wordlist as BIP39 } from '@scure/bip39/wordlists/english.js';
 import { normalizeText, normalizeName, editDistance } from './normalize.js';
+import { findAddresses } from './xrpl.js';
 
 const BIP39_SET = new Set(BIP39);
 const PHRASE_LENGTHS = [24, 21, 18, 15, 12];
@@ -100,8 +101,8 @@ export function extractHosts(content = '') {
  * allowed | blocked | punycode | lookalike | shortener | suspicious | unknown
  */
 export function classifyHost(host, cfg) {
-  if (cfg.allowedDomains.some((d) => hostMatches(host, d))) return 'allowed';
   if (cfg.blockedDomains.some((d) => hostMatches(host, d))) return 'blocked';
+  if (cfg.allowedDomains.some((d) => hostMatches(host, d))) return 'allowed';
   if (host.split('.').some((p) => p.startsWith('xn--'))) return 'punycode';
   if (cfg.shorteners.some((d) => hostMatches(host, d))) return 'shortener';
 
@@ -193,6 +194,8 @@ export function scanMessage({ content = '', mentionCount = 0, accountAgeDays = I
   const invite = INVITE_RE.test(content);
   const disguised = findDisguisedLinks(content);
   const hosts = extractHosts(content).map((host) => ({ host, kind: classifyHost(host, cfg) }));
+  const addresses = findAddresses(content);
+  const scamAddresses = addresses.filter((a) => (cfg.blockedAddresses ?? []).includes(a));
 
   const badHosts = hosts.filter((h) => ['blocked', 'punycode', 'lookalike'].includes(h.kind));
   const riskyHosts = hosts.filter((h) => ['unknown', 'shortener', 'suspicious'].includes(h.kind));
@@ -208,11 +211,13 @@ export function scanMessage({ content = '', mentionCount = 0, accountAgeDays = I
   for (const h of badHosts) { reasons.push(`${h.kind} domain: ${h.host}`); bump('remove'); }
   for (const d of disguised) { reasons.push(`disguised link: shows ${d.shown}, goes to ${d.real}`); bump('remove'); }
   if (invite) { reasons.push('Discord invite link'); bump('remove'); }
+  for (const a of scamAddresses) { reasons.push(`known scam address: ${a}`); bump('remove'); }
   if (mentionCount >= cfg.massMentionLimit) { reasons.push(`mass mention (${mentionCount})`); bump('remove'); }
 
   for (const why of soft) {
     reasons.push(why);
-    bump(riskyHosts.length || invite ? 'remove' : 'flag');
+    // Bait plus somewhere to go (a link, an invite, or an address to send to) is a removal.
+    bump(riskyHosts.length || invite || addresses.length ? 'remove' : 'flag');
   }
   for (const h of riskyHosts) {
     reasons.push(`${h.kind} link: ${h.host}`);
@@ -220,7 +225,7 @@ export function scanMessage({ content = '', mentionCount = 0, accountAgeDays = I
   }
   if (isNew && riskyHosts.length) reasons.push(`account is under ${cfg.minAccountAgeDays} days old`);
 
-  return { verdict, reasons, hosts };
+  return { verdict, reasons, hosts, addresses };
 }
 
 /**

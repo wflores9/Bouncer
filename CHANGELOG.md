@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0
+
+- **Gate:** `/bouncer gate` posts an "Enter the Club" button that gives a role, with a short wait for new joins and a hold during raids. `/bouncer welcome` sets a welcome channel.
+- **Spam & flood:** fast posting and copy-paste spam (same message 3x, across 3 channels, or a link in 2) are cleared, every copy deleted, poster timed out.
+- **Strikes & cases:** `/warn`, `/unwarn`, `/cases`. Automatic removals count too. Strikes expire after 30 days and escalate (2 → 6h, 3 → 24h + "consider a ban").
+- **Live lists:** `/bouncer domain|name|address` and `/bouncer lists`. No restart. A runtime block beats an allow.
+- **Xaman wallet linking:** `/wallet link|show|unlink` using a SignIn request only. One wallet per member.
+- **Holder roles:** `/holder add|list|remove|sync` for trustline/token, NFT (with taxon) or XRP-balance rules. Re-checked daily and on link.
+- **XRPL lookups:** `/xrpl account|tx|domain`, read-only. `domain` checks `xrp-ledger.toml` and two-way account/domain matches.
+- **Scam addresses:** messages with a listed r-address are removed. Bait plus any r-address is removed.
+- Data now lives in `data/bouncer.json`. Invite permissions add Manage Roles.
+
+
 ## 1.0.1
 
 - **Fix:** normal chat made of 12+ seed-list words was deleted as a "recovery phrase". Phrases now have to pass the BIP39 checksum, and a long message also has to not read like a sentence. A message that is just the phrase is always caught.

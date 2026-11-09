@@ -1,7 +1,7 @@
 {
   "name": "bouncer",
-  "version": "1.0.1",
-  "description": "Bouncer: door security for The Trustline Club Discord. Flags scams, raids and impersonators; deletes and times out clear hits.",
+  "version": "1.1.0",
+  "description": "Bouncer: door security for The Trustline Club Discord. Scams, raids, impersonators, spam, strikes, a door gate, Xaman wallet linking, holder roles and XRPL lookups.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

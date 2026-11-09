@@ -22,6 +22,15 @@ const LINES = {
     'Keeping an eye on this one.',
     'Might be nothing. Worth a look.',
   ],
+  flood: [
+    'Easy. One drink at a time.',
+    'Slow down at the bar.',
+  ],
+  welcome: [
+    'Door\'s open.',
+    'Fresh face at the bar.',
+    'Right this way.',
+  ],
   calm: [
     'Door is quiet.',
     'All good at the rope.',
