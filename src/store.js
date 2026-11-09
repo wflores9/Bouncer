@@ -15,6 +15,7 @@ function empty() {
     lists: Object.fromEntries(LIST_NAMES.map((n) => [n, []])),
     addressNotes: {}, // address -> note
     holderRules: [],
+    appeals: {}, // key -> { userId, reason, minutes, at, used }
     settings: {},
   };
 }
@@ -122,6 +123,35 @@ export class Store {
   }
 
   allWallets() { return Object.entries(this.data.wallets).map(([userId, w]) => ({ userId, ...w })); }
+
+  // ---------- appeals ----------
+  /** One appeal per timeout. Returns the key used in the DM button. */
+  addAppeal({ userId, reason, minutes, now = Date.now() }) {
+    const key = `${userId.slice(-6)}${now.toString(36)}`;
+    this.data.appeals[key] = { userId, reason, minutes, at: now, used: false };
+    // Keep the file small: drop appeals older than 30 days.
+    for (const [k, a] of Object.entries(this.data.appeals)) if (now - a.at > 30 * 86_400_000) delete this.data.appeals[k];
+    this.save();
+    return key;
+  }
+
+  /** @returns {'ok'|'missing'|'not-yours'|'used'|'expired'} */
+  checkAppeal(key, userId, now = Date.now()) {
+    const a = this.data.appeals[key];
+    if (!a) return 'missing';
+    if (a.userId !== userId) return 'not-yours';
+    if (a.used) return 'used';
+    if (now - a.at > 7 * 86_400_000) return 'expired';
+    return 'ok';
+  }
+
+  useAppeal(key) {
+    const a = this.data.appeals[key];
+    if (!a || a.used) return null;
+    a.used = true;
+    this.save();
+    return a;
+  }
 
   // ---------- holder rules ----------
   rules() { return this.data.holderRules; }

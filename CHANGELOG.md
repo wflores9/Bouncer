@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+
+- **Appeals:** every timeout DMs a one-time Appeal button; the member's side goes to #staff with Lift timeout / Handled buttons. One DM per removal, even when a strike escalates it.
+- **Scam lookup alerts:** a member looking up a scam-listed address or tx with `/xrpl` triggers a #modlog heads-up.
+- **Fix:** a bad token or missing intents now exits with an error, so Railway shows a crash and restarts instead of a quiet "Completed", with a hint in the log.
+
+
 ## 1.2.0
 
 - **Gate modes:** `button`, `wallet` (Xaman sign-in + activated mainnet wallet) and `trustline` (wallet + trustline to a token: "No trustline, no entry"). Switch modes by running `/bouncer gate` again.

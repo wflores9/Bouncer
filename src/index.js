@@ -3,7 +3,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, Client, EmbedBuilder,
-  Events, GatewayIntentBits, MessageFlags, Partials, PermissionFlagsBits,
+  Events, GatewayIntentBits, MessageFlags, ModalBuilder, Partials, PermissionFlagsBits,
+  TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { scanMessage, checkName, classifyHost, extractHosts } from './detect.js';
 import { RaidWatch } from './raid.js';
@@ -86,15 +87,36 @@ async function modlog(payload) {
   }
 }
 
-async function timeout(member, reason, minutes = cfg.timeoutMinutes) {
+async function timeout(member, reason, minutes = cfg.timeoutMinutes, { appeal = true } = {}) {
   const m = clampTimeoutMinutes(minutes);
   try {
     await member.timeout(m * 60_000, `Bouncer: ${reason}`.slice(0, 500));
     stats.timeouts += 1;
+    if (appeal) sendAppealDm(member.user, reason, m).catch(() => {});
     return `Timed out ${formatMinutes(m)}`;
   } catch (err) {
     return `Timeout failed (${err.message}). Check Bouncer's role is above theirs.`;
   }
+}
+
+/** DM a timed-out member a one-time Appeal button. Silent if their DMs are closed. */
+async function sendAppealDm(user, reason, minutes) {
+  const key = store.addAppeal({ userId: user.id, reason, minutes });
+  await user.send({
+    embeds: [new EmbedBuilder().setColor(COLORS.flag).setTitle('⏸️ You were timed out')
+      .setDescription([
+        `**Where:** The Trustline Club`,
+        `**How long:** ${formatMinutes(minutes)}`,
+        `**Why:** ${reason}`.slice(0, 500),
+        '',
+        'If you think this was a mistake, press **Appeal** and tell the mods what happened. One appeal per timeout.',
+        'Staff will never ask for your seed, secret numbers or keys, in an appeal or anywhere else.',
+      ].join('\n'))
+      .setFooter({ text: 'Bouncer' })],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`bouncer:appeal:${key}`).setLabel('Appeal').setStyle(ButtonStyle.Primary),
+    )],
+  });
 }
 
 async function notice(channel, text, seconds = 12) {
@@ -202,8 +224,10 @@ async function screen(message, { isEdit = false } = {}) {
   if (result.verdict === 'remove') {
     stats.removed += 1;
     await message.delete().catch(() => {});
-    const t = member ? await timeout(member, result.reasons[0]) : 'Not a member, no timeout';
+    const t = member ? await timeout(member, result.reasons[0], cfg.timeoutMinutes, { appeal: false }) : 'Not a member, no timeout';
     const s = await strike(member, user, 'auto', result.reasons[0], null, cfg.timeoutMinutes);
+    // One appeal DM per removal: the escalated timeout already sent one if it happened.
+    if (t.startsWith('Timed out') && !s.escalated?.startsWith('Timed out')) sendAppealDm(user, result.reasons[0], cfg.timeoutMinutes).catch(() => {});
     await notice(message.channel, `${line('remove')} (${user})`);
     await modlog({
       embeds: [baseEmbed('remove', user, `🚪 ${line('remove')}`)
@@ -226,8 +250,9 @@ async function screen(message, { isEdit = false } = {}) {
     if (f.verdict !== 'none') {
       stats.floods += 1;
       await deleteRefs(f.messages);
-      const t = member ? await timeout(member, `${f.verdict}: ${f.reason}`) : 'Not a member, no timeout';
+      const t = member ? await timeout(member, `${f.verdict}: ${f.reason}`, cfg.timeoutMinutes, { appeal: false }) : 'Not a member, no timeout';
       const s = await strike(member, user, 'auto', `${f.verdict}: ${f.reason}`, null, cfg.timeoutMinutes);
+      if (t.startsWith('Timed out') && !s.escalated?.startsWith('Timed out')) sendAppealDm(user, `${f.verdict}: ${f.reason}`, cfg.timeoutMinutes).catch(() => {});
       await notice(message.channel, `${line('flood')} (${user})`);
       await modlog({
         embeds: [baseEmbed('remove', user, `🌊 ${f.verdict === 'flood' ? 'Flooding' : 'Copy-paste spam'}, cleared`)
@@ -726,6 +751,7 @@ async function cmdXrpl(i) {
     const e = new EmbedBuilder().setColor(COLORS.info).setTitle(short(address)).setURL(xrpscan('account', address)).setFooter({ text: 'Read-only · validated ledger' });
     if (cfg.blockedAddresses.includes(address)) {
       e.setColor(COLORS.remove).setDescription(`⛔ **On Bouncer's scam list.**${store.data.addressNotes[address] ? ` ${store.data.addressNotes[address]}` : ''}`);
+      await scamLookupAlert(i, `account \`${address}\``);
     }
     if (!info) return i.editReply({ embeds: [e.addFields({ name: 'Status', value: 'Not activated (no XRP reserve yet).' })] });
     const [lines, nfts] = await Promise.all([xrpl.lines(address).catch(() => null), xrpl.nfts(address).catch(() => null)]);
@@ -766,7 +792,10 @@ async function cmdXrpl(i) {
       .setFooter({ text: 'Read-only' });
     const date = tx.date ?? t.date;
     if (date) e.setTimestamp(rippleTime(date));
-    if (flagged.length) e.setDescription(`⛔ Involves an address on Bouncer's scam list: ${flagged.map((a) => `\`${a}\``).join(', ')}`);
+    if (flagged.length) {
+      e.setDescription(`⛔ Involves an address on Bouncer's scam list: ${flagged.map((a) => `\`${a}\``).join(', ')}`);
+      await scamLookupAlert(i, `tx \`${hash.slice(0, 12)}…\` (${flagged.map((a) => `\`${a}\``).join(', ')})`);
+    }
     return i.editReply({ embeds: [e] });
   }
 
@@ -800,6 +829,16 @@ async function cmdXrpl(i) {
     return i.editReply({ embeds: [e] });
   }
   return null;
+}
+
+/** Someone looked up a scam-listed address: often a member checking a DM they got. Worth a mod's eye. */
+async function scamLookupAlert(i, what) {
+  if (isStaff(i.member)) return;
+  await modlog({
+    embeds: [baseEmbed('flag', i.user, '🔎 Scam-listed address looked up')
+      .setDescription(`${i.user} looked up ${what}. They may have been contacted by a scammer; consider checking in.`)],
+    allowedMentions: { parse: [] },
+  });
 }
 
 async function cmdHolder(i) {
@@ -920,11 +959,53 @@ async function modButton(i) {
   return i.update({ ...(embed ? { embeds: [embed] } : { content: `${i.message.content}\n${result}` }), components: done ? [] : buttons(userId, true) });
 }
 
+async function appealButton(i) {
+  const key = i.customId.split(':')[2];
+  const state = store.checkAppeal(key, i.user.id);
+  const msg = { missing: 'That appeal has expired.', 'not-yours': "That button isn't for you.", used: 'You already sent an appeal for this timeout. A mod will look at it.', expired: 'Appeals close after 7 days.' }[state];
+  if (msg) return i.reply({ content: msg, ...(i.guildId ? { flags: EPH } : {}) });
+  const modal = new ModalBuilder().setCustomId(`bouncer:appealform:${key}`).setTitle('Appeal your timeout')
+    .addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId('why').setLabel('What happened?').setStyle(TextInputStyle.Paragraph)
+        .setMinLength(10).setMaxLength(800).setRequired(true)
+        .setPlaceholder('Explain briefly. Never include your seed, keys or secret numbers.'),
+    ));
+  return i.showModal(modal);
+}
+
+async function appealForm(i) {
+  const key = i.customId.split(':')[2];
+  if (store.checkAppeal(key, i.user.id) !== 'ok') return i.reply({ content: 'That appeal is closed.' });
+  const a = store.useAppeal(key);
+  const why = i.fields.getTextInputValue('why');
+  try {
+    const staff = await client.channels.fetch(cfg.staffChannelId);
+    await staff.send({
+      embeds: [baseEmbed('info', i.user, '📨 Timeout appeal')
+        .addFields(
+          { name: 'Timed out for', value: `${formatMinutes(a.minutes)}: ${a.reason}`.slice(0, 1000) },
+          { name: 'Their side', value: why.slice(0, 1000) },
+          { name: 'Strikes', value: String(store.strikeCount(i.user.id, base.strikes.expireDays)), inline: true },
+          { name: 'Account age', value: `${ageDays(i.user).toFixed(1)} days`, inline: true },
+        )],
+      components: buttons(i.user.id, true),
+    });
+  } catch (e) {
+    console.error('appeal:', e.message);
+    return i.reply({ content: "Couldn't deliver your appeal right now. Try again later." });
+  }
+  return i.reply({ content: '📨 Appeal sent. A mod will review it; you may hear back here or in the server.' });
+}
+
 const HANDLERS = { bouncer: cmdBouncer, warn: cmdWarn, unwarn: cmdUnwarn, cases: cmdCases, wallet: cmdWallet, xrpl: cmdXrpl, holder: cmdHolder };
 
 client.on(Events.InteractionCreate, async (i) => {
   try {
     if (i.guildId && i.guildId !== cfg.guildId) return;
+    // Appeals arrive from DMs (no guild), so route them before anything needs i.guild.
+    if (i.isButton() && i.customId.startsWith('bouncer:appeal:')) return await appealButton(i);
+    if (i.isModalSubmit() && i.customId.startsWith('bouncer:appealform:')) return await appealForm(i);
+    if (!i.guildId) return;
     if (i.isChatInputCommand() && HANDLERS[i.commandName]) return await HANDLERS[i.commandName](i);
     if (i.isButton() && i.customId === 'bouncer:gate') return await gateButton(i);
     if (i.isButton() && i.customId.startsWith('bouncer:')) return await modButton(i);
@@ -957,4 +1038,11 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 process.on('unhandledRejection', (e) => console.error('unhandled:', e));
-client.login(TOKEN);
+// A bad token or missing intents must look like a crash, so hosts (Railway) flag it and restart,
+// instead of a quiet "Completed".
+client.login(TOKEN).catch((e) => {
+  console.error(`Login failed: ${e.code ?? ''} ${e.message}`.trim());
+  if (e.code === 'TokenInvalid') console.error('Check DISCORD_TOKEN: no quotes, no spaces, current token from the Developer Portal.');
+  if (/disallowed intents/i.test(e.message)) console.error('Turn on Server Members Intent and Message Content Intent in the Developer Portal → Bot.');
+  process.exit(1);
+});

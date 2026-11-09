@@ -26,6 +26,8 @@ Door security for **The Trustline Club** Discord. Bouncer watches the rope: it r
 | Ticket Tool opens a `report-` channel | Pings #staff |
 
 **Bans stay manual.** Every log has **Timeout / Lift timeout / Handled** buttons for mods.
+Every timeout DMs the member a one-time **Appeal** button (open for 7 days). Appeals land in #staff with the same buttons.
+If a non-staff member runs `/xrpl` on a scam-listed address, #modlog gets a heads-up: they may have been contacted by a scammer.
 Staff (anyone with *Manage Messages*) and bots are exempt. Edited messages are re-checked.
 
 ### Strikes

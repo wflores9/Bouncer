@@ -244,3 +244,18 @@ test('gate: trustline mode needs the line', async () => {
   assert.equal(r.ok, false);
   assert.match(r.reason, /No trustline, no entry/);
 });
+
+// ---------- appeals ----------
+
+test('appeals: one per timeout, only for the timed-out member, expire after 7 days', () => {
+  const s = new Store();
+  const now = Date.now();
+  const key = s.addAppeal({ userId: '111222333444555666', reason: 'flood', minutes: 60, now });
+  assert.equal(s.checkAppeal(key, '999'), 'not-yours');
+  assert.equal(s.checkAppeal(key, '111222333444555666', now), 'ok');
+  assert.equal(s.checkAppeal(key, '111222333444555666', now + 8 * 86_400_000), 'expired');
+  assert.equal(s.useAppeal(key).reason, 'flood');
+  assert.equal(s.checkAppeal(key, '111222333444555666', now), 'used');
+  assert.equal(s.useAppeal(key), null);
+  assert.equal(s.checkAppeal('nope', '1'), 'missing');
+});
